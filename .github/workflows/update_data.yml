@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      MIN_YEAR: "2010"
+      MIN_VOTES: "10000"
     steps:
       - uses: actions/checkout@v4
 
