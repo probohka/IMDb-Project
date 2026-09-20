@@ -1,4 +1,4 @@
-"""Построение аналитической коллекции фильмов IMDb и загрузка в MongoDB (для MongoDB Charts)."""
+"""Build the analytical IMDb movies collection and load it into MongoDB (for MongoDB Charts)."""
 
 import os
 import sys
@@ -13,7 +13,7 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
-# Полный IMDb не влезет в бесплатный тир Atlas (512MB) — отсекаем малозаметные тайтлы.
+# Full IMDb won't fit into Atlas's free tier (512MB) — filter out low-visibility titles.
 MIN_VOTES = int(os.environ.get("MIN_VOTES", 500))
 MIN_YEAR = int(os.environ.get("MIN_YEAR", 1900))
 CHUNK_SIZE = 200_000
@@ -51,7 +51,7 @@ def load_movies() -> pd.DataFrame:
 
 
 def load_directors(tconsts: set) -> dict:
-    """tconst -> список имён режиссёров. title.principals большой — читаем чанками."""
+    """tconst -> list of director names. title.principals is large — read it in chunks."""
     director_ids: dict = {}
     reader = pd.read_csv(
         RAW_DIR / "title.principals.tsv.gz",
@@ -89,10 +89,10 @@ def load_directors(tconsts: set) -> dict:
 
 
 def load_markets(tconsts: set) -> dict:
-    """tconst -> список регионов (ISO-код), где IMDb показывает тайтл как основной (type=imdbDisplay).
+    """tconst -> list of regions (ISO code) where IMDb shows the title as its display title (type=imdbDisplay).
 
-    title.akas большой — читаем чанками. isOriginalTitle тут не используется:
-    у строк с этим флагом region всегда пустой, так что для стран/рынков он бесполезен.
+    title.akas is large — read it in chunks. isOriginalTitle isn't used here:
+    rows with that flag always have an empty region, so it's useless for countries/markets.
     """
     markets: dict = {}
     reader = pd.read_csv(
@@ -152,23 +152,23 @@ def load_to_mongo(docs: list) -> None:
 
 
 def run() -> None:
-    print(f"Фильтр: startYear >= {MIN_YEAR}, numVotes >= {MIN_VOTES}")
+    print(f"Filter: startYear >= {MIN_YEAR}, numVotes >= {MIN_VOTES}")
 
     movies = load_movies()
-    print(f"Фильмов после фильтра: {len(movies)}")
+    print(f"Movies after filter: {len(movies)}")
     if movies.empty:
-        print("Нет фильмов, подходящих под фильтр — сначала запусти src/collector.py")
+        print("No movies match the filter — run src/collector.py first")
         return
 
     directors = load_directors(set(movies["tconst"]))
-    print(f"Фильмов с найденным режиссёром: {len(directors)}")
+    print(f"Movies with a director found: {len(directors)}")
 
     markets = load_markets(set(movies["tconst"]))
-    print(f"Фильмов с данными о рынках: {len(markets)}")
+    print(f"Movies with market data: {len(markets)}")
 
     docs = build_documents(movies, directors, markets)
     load_to_mongo(docs)
-    print(f"Загружено в MongoDB: {len(docs)} фильмов")
+    print(f"Loaded into MongoDB: {len(docs)} movies")
 
 
 if __name__ == "__main__":
