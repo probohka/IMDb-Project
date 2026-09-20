@@ -88,7 +88,36 @@ def load_directors(tconsts: set) -> dict:
     }
 
 
-def build_documents(movies: pd.DataFrame, directors: dict) -> list:
+def load_markets(tconsts: set) -> dict:
+    """tconst -> список регионов (ISO-код), где IMDb показывает тайтл как основной (type=imdbDisplay).
+
+    title.akas большой — читаем чанками. isOriginalTitle тут не используется:
+    у строк с этим флагом region всегда пустой, так что для стран/рынков он бесполезен.
+    """
+    markets: dict = {}
+    reader = pd.read_csv(
+        RAW_DIR / "title.akas.tsv.gz",
+        sep="\t",
+        na_values="\\N",
+        dtype=str,
+        usecols=["titleId", "region", "types"],
+        chunksize=CHUNK_SIZE,
+    )
+    for chunk in reader:
+        mask = (
+            chunk["titleId"].isin(tconsts)
+            & chunk["region"].notna()
+            & chunk["types"].str.contains("imdbDisplay", na=False)
+        )
+        for tconst, region in chunk.loc[mask, ["titleId", "region"]].itertuples(
+            index=False
+        ):
+            markets.setdefault(tconst, set()).add(region)
+
+    return {tconst: sorted(regions) for tconst, regions in markets.items()}
+
+
+def build_documents(movies: pd.DataFrame, directors: dict, markets: dict) -> list:
     docs = []
     for row in movies.itertuples(index=False):
         year = int(row.startYear)
@@ -105,6 +134,7 @@ def build_documents(movies: pd.DataFrame, directors: dict) -> list:
                 "rating": float(row.averageRating),
                 "numVotes": int(row.numVotes),
                 "directors": directors.get(row.tconst, []),
+                "markets": markets.get(row.tconst, []),
             }
         )
     return docs
@@ -118,6 +148,7 @@ def load_to_mongo(docs: list) -> None:
     db.movies.create_index("year")
     db.movies.create_index("genres")
     db.movies.create_index("rating")
+    db.movies.create_index("markets")
 
 
 def run() -> None:
@@ -132,7 +163,10 @@ def run() -> None:
     directors = load_directors(set(movies["tconst"]))
     print(f"Фильмов с найденным режиссёром: {len(directors)}")
 
-    docs = build_documents(movies, directors)
+    markets = load_markets(set(movies["tconst"]))
+    print(f"Фильмов с данными о рынках: {len(markets)}")
+
+    docs = build_documents(movies, directors, markets)
     load_to_mongo(docs)
     print(f"Загружено в MongoDB: {len(docs)} фильмов")
 

@@ -18,6 +18,7 @@ FILES = [
     "title.ratings.tsv.gz",  # рейтинг и число голосов — фильтр «заметных» фильмов
     "title.principals.tsv.gz",  # связь тайтл -> люди (актёры, режиссёры, ...)
     "name.basics.tsv.gz",  # имена людей
+    "title.akas.tsv.gz",  # региональные названия — источник для поля markets
 ]
 
 
