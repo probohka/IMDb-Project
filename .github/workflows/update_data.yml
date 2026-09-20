@@ -1,4 +1,4 @@
-name: Update collaboration graph
+name: Update IMDb data
 
 on:
   schedule:

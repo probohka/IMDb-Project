@@ -1,14 +1,18 @@
 """Скачивание официальных дампов IMDb non-commercial datasets в data/raw/."""
 
+import sys
 from pathlib import Path
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 BASE_URL = "https://datasets.imdbws.com"
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
-# Файлы, нужные для графа связей актёров/режиссёров.
+# Файлы, нужные для построения аналитической коллекции фильмов.
 FILES = [
     "title.basics.tsv.gz",  # тип тайтла, год, жанры
     "title.ratings.tsv.gz",  # рейтинг и число голосов — фильтр «заметных» фильмов
