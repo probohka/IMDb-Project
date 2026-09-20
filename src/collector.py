@@ -1,4 +1,4 @@
-"""Скачивание официальных дампов IMDb non-commercial datasets в data/raw/."""
+"""Download official IMDb non-commercial dataset dumps into data/raw/."""
 
 import sys
 from pathlib import Path
@@ -12,13 +12,13 @@ sys.stderr.reconfigure(encoding="utf-8")
 BASE_URL = "https://datasets.imdbws.com"
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
-# Файлы, нужные для построения аналитической коллекции фильмов.
+# Files needed to build the analytical movies collection.
 FILES = [
-    "title.basics.tsv.gz",  # тип тайтла, год, жанры
-    "title.ratings.tsv.gz",  # рейтинг и число голосов — фильтр «заметных» фильмов
-    "title.principals.tsv.gz",  # связь тайтл -> люди (актёры, режиссёры, ...)
-    "name.basics.tsv.gz",  # имена людей
-    "title.akas.tsv.gz",  # региональные названия — источник для поля markets
+    "title.basics.tsv.gz",  # title type, year, genres
+    "title.ratings.tsv.gz",  # rating and vote count — filter for "notable" movies
+    "title.principals.tsv.gz",  # title -> people link (actors, directors, ...)
+    "name.basics.tsv.gz",  # people's names
+    "title.akas.tsv.gz",  # regional titles — source for the markets field
 ]
 
 
@@ -38,14 +38,14 @@ def _download(filename: str) -> Path:
                         f"  {filename}: {written / 1e6:.0f}/{total / 1e6:.0f} MB",
                         end="\r",
                     )
-    print(f"  {filename}: готово ({written / 1e6:.0f} MB)")
+    print(f"  {filename}: done ({written / 1e6:.0f} MB)")
     return out_path
 
 
 def collect() -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     for filename in FILES:
-        print(f"Скачивание {filename}...")
+        print(f"Downloading {filename}...")
         _download(filename)
 
 

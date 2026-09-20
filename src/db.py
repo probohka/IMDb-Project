@@ -1,4 +1,4 @@
-"""Подключение к MongoDB Atlas: общий клиент для ETL."""
+"""MongoDB Atlas connection: shared client for the ETL."""
 
 import os
 
