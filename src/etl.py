@@ -1,11 +1,15 @@
 """Построение аналитической коллекции фильмов IMDb и загрузка в MongoDB (для MongoDB Charts)."""
 
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 from db import get_db
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
