@@ -48,7 +48,7 @@ Dashboards are built in Atlas: **Charts** in the left sidebar → **Add Dashboar
 ## Repository structure
 
 ```
-imdbProject/
+IMDb-Project/
 ├── src/
 │   ├── collector.py   # downloads IMDb dumps
 │   ├── db.py            # MongoDB Atlas connection
