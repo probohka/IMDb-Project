@@ -3,3 +3,4 @@ pandas>=2.1
 pymongo>=4.6
 tenacity>=8.2
 python-dotenv>=1.0
+psycopg[binary]>=3.1
