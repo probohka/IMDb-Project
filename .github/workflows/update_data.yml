@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      DWH_URL: ${{ secrets.DWH_URL }}
       MIN_YEAR: "2010"
       MIN_VOTES: "10000"
     steps:
@@ -23,3 +24,4 @@ jobs:
 
       - run: python src/collector.py
       - run: python src/etl.py
+      - run: python src/dwh.py
