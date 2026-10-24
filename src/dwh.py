@@ -1,5 +1,6 @@
 """Batch ELT: flatten the MongoDB `movies` collection into PostgreSQL tables (Neon) for SQL/BI analytics."""
 
+import csv
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
+CENTROIDS_FILE = SCHEMA_FILE.with_name("country_centroids.csv")
 DWH_URL = os.environ.get("DWH_URL")
 
 
@@ -62,6 +64,16 @@ def load_to_postgres(docs: list) -> None:
         copy_rows(cur, "movie_genre", "tconst, genre", genres)
         copy_rows(cur, "movie_director", "tconst, director", directors)
         copy_rows(cur, "movie_market", "tconst, region", markets)
+
+        cur.execute("TRUNCATE country_centroids")
+        with CENTROIDS_FILE.open(encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(line for line in f if not line.startswith("#"))
+            copy_rows(
+                cur,
+                "country_centroids",
+                "region, country_name, lat, lon",
+                [(r["region"], r["country_name"], r["lat"], r["lon"]) for r in reader],
+            )
 
     print(
         f"Loaded into PostgreSQL: {len(movies)} movies, {len(genres)} genres, "
