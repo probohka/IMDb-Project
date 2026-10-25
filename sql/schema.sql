@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS country_centroids (
     lat          DOUBLE PRECISION NOT NULL,
     lon          DOUBLE PRECISION NOT NULL
 );
+-- kind: 'country' (current country), 'historical' (SUHH, YUCS, ...), 'aggregate' (XWW, XEU, ...).
+ALTER TABLE country_centroids ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'country';
 
 -- Marts: plain views for BI (always fresh, no REFRESH needed after the full reload).
 
@@ -85,20 +87,30 @@ FROM movie_market k
 JOIN dim_movie m USING (tconst)
 GROUP BY k.region, m.year;
 
--- Localization proxy per country with coordinates, for the DataLens map (geopoints).
--- Non-country codes (XWW, XEU, SUHH, ...) have no centroid and drop out via the inner join.
+-- Localization proxy per region with coordinates, for the DataLens maps (geopoints).
+-- `movies` is per region: do NOT sum it across regions (a movie is localized in many).
+-- Filter on `kind`: 'country' for the world map, 'historical'/'aggregate' for the second one.
 CREATE OR REPLACE VIEW mart_markets_geo AS
 SELECT
     c.region,
     c.country_name,
     c.lat,
     c.lon,
-    count(*)                 AS movies,
-    round(avg(m.rating), 2)  AS avg_rating
+    count(DISTINCT k.tconst) AS movies,
+    round(avg(m.rating), 2)  AS avg_rating,
+    c.kind
 FROM movie_market k
-JOIN country_centroids c USING (region)
+-- IMDb alias codes folded into one point: Kosovo (XKV, XKO -> XK), Palestine (XPI -> PS), Yugoslavia (XYU -> YUCS).
+JOIN country_centroids c
+  ON c.region = CASE k.region
+                    WHEN 'XKV' THEN 'XK'
+                    WHEN 'XKO' THEN 'XK'
+                    WHEN 'XPI' THEN 'PS'
+                    WHEN 'XYU' THEN 'YUCS'
+                    ELSE k.region
+                END
 JOIN dim_movie m USING (tconst)
-GROUP BY c.region, c.country_name, c.lat, c.lon;
+GROUP BY c.region, c.country_name, c.lat, c.lon, c.kind;
 
 -- One row per movie: list attributes aggregated per movie so joins can't multiply rows.
 CREATE OR REPLACE VIEW mart_movies_flat AS

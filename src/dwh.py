@@ -71,8 +71,11 @@ def load_to_postgres(docs: list) -> None:
             copy_rows(
                 cur,
                 "country_centroids",
-                "region, country_name, lat, lon",
-                [(r["region"], r["country_name"], r["lat"], r["lon"]) for r in reader],
+                "region, country_name, lat, lon, kind",
+                [
+                    (r["region"], r["country_name"], r["lat"], r["lon"], r["kind"])
+                    for r in reader
+                ],
             )
 
     print(
