@@ -6,69 +6,110 @@
   </a>
 </p>
 
-Movie analytics built on [IMDb](https://www.imdb.com/) data: genre trends by decade, rating vs. vote count, directors, and more. Data comes from the official [IMDb non-commercial datasets](https://datasets.imdbws.com/); storage and visualization run on MongoDB Atlas with built-in [MongoDB Charts](https://www.mongodb.com/products/charts).
+An end-to-end batch pipeline for movie analytics: download the official [IMDb non-commercial datasets](https://datasets.imdbws.com/), build an enriched movie collection in MongoDB Atlas, and load a relational warehouse in Neon PostgreSQL. SQL marts support analysis of genre trends, ratings, directors, and localization markets in BI tools such as DataLens. MongoDB Charts can also use the MongoDB collection directly.
 
 ## Architecture
 
+MongoDB Atlas serves as the pipeline's **OLTP database**, storing movie documents and providing the source data for the warehouse. Neon PostgreSQL serves as the **OLAP data warehouse**, exposing relational tables and SQL marts for BI analytics. The current pipeline refreshes MongoDB in batches rather than through live application transactions.
+
+```text
+IMDb datasets
+    |
+    v
+collector.py --> data/raw/*.tsv.gz
+                       |
+                       v
+                     etl.py
+                       |
+                       v
+               MongoDB Atlas (OLTP, movies) --> MongoDB Charts
+                       |
+                       v
+                     dwh.py <-- sql/schema.sql + sql/country_centroids.csv
+                       |
+                       v
+               Neon PostgreSQL (OLAP)
+                tables + SQL marts
+                       |
+                       v
+                 BI / DataLens
 ```
-[datasets.imdbws.com] → collector.py → data/raw/*.tsv.gz → etl.py → MongoDB Atlas (movies) → MongoDB Charts
-```
 
-- **`src/collector.py`** — downloads `title.basics`, `title.ratings`, `title.principals`, `name.basics`, `title.akas` into `data/raw/`.
-- **`src/etl.py`** — filters movies by year and vote count (`MIN_YEAR`, `MIN_VOTES` — the full IMDb dataset is too large for Atlas's free tier), resolves directors, derives localization markets, and loads everything into the `movies` collection.
-- **MongoDB Charts** — dashboards are built directly in the Atlas UI on top of the `movies` collection, no custom code required.
-- **`.github/workflows/update_data.yml`** — weekly data refresh via GitHub Actions (uses the `MONGODB_URI` secret).
-
-### Local vs. cloud runs
-
-The pipeline can run in two places, and each reads its config from a different, independent source:
-
-- **Locally** — `collector.py`/`etl.py` read `.env` (via `python-dotenv`) for `MONGODB_URI`, `DB_NAME`, `MIN_YEAR`, `MIN_VOTES`. Useful for one-off exploration of raw data or testing filter changes without touching the scheduled pipeline.
-- **In the cloud** — `.github/workflows/update_data.yml` runs the same two scripts on a GitHub-hosted runner. `.env` is gitignored and never reaches the runner, so the workflow sets `MONGODB_URI` (from the `MONGODB_URI` repository secret), `MIN_YEAR`, and `MIN_VOTES` directly in its own `env:` block.
-
-These two configs don't sync automatically — changing a filter value in `.env` has no effect on the cloud run, and vice versa. Update both when adjusting `MIN_YEAR`/`MIN_VOTES`.
-
-### MongoDB Atlas network access
-
-GitHub-hosted Actions runners are ephemeral VMs drawn from a large, dynamically allocated IP pool that changes between (and sometimes during) runs — there's no single fixed IP that can be safely whitelisted ahead of time. Atlas's **Network Access** list therefore needs `0.0.0.0/0` (Allow Access from Anywhere) for the workflow to connect at all; access control is enforced by the database user's credentials rather than by source IP, which is the standard model for CI/CD integrations connecting to a managed database.
+1. **Extract — `src/collector.py`:** downloads `title.basics`, `title.ratings`, `title.principals`, `name.basics`, and `title.akas` into `data/raw/`. Downloads stream to disk and retry up to five times on failure.
+2. **Transform and load — `src/etl.py`:** selects `movie` titles by minimum release year and vote count, joins ratings, resolves director names, derives localization markets, and reloads the MongoDB `movies` collection. The large principals and regional-title files are processed in chunks.
+3. **Warehouse load — `src/dwh.py`:** reads the MongoDB collection, flattens array attributes into related tables, applies the SQL schema, and loads PostgreSQL through `COPY`. Tables and country reference data are refreshed in one transaction.
+4. **Analytics:** PostgreSQL views expose ready-to-query marts for BI; MongoDB Charts can query `movies` independently.
 
 ## Setup and usage
 
+Use Python 3.12, matching the GitHub Actions workflow, a MongoDB database, and a Neon PostgreSQL database. Run commands from the repository root:
+
 ```bash
-cp .env.example .env          # paste your MongoDB Atlas connection string
-
-pip install -r requirements.txt
-
-python src/collector.py       # download IMDb dumps (a few hundred MB, takes minutes)
-python src/etl.py             # filter and load movies into MongoDB
+python -m venv .venv
+# Activate: source .venv/bin/activate (macOS/Linux)
+# Activate: .venv\Scripts\Activate.ps1 (PowerShell)
+python -m pip install -r requirements.txt
 ```
 
-Dashboards are built in Atlas: **Charts** in the left sidebar → **Add Dashboard** → data source is the `movies` collection.
+Copy `.env.example` to `.env` (`cp .env.example .env` in Bash or `Copy-Item .env.example .env` in PowerShell). Fill in your MongoDB connection string and add `DWH_URL`, which is required by the warehouse stage:
 
-## Repository structure
-
-```
-IMDb-Project/
-├── src/
-│   ├── collector.py   # downloads IMDb dumps
-│   ├── db.py            # MongoDB Atlas connection
-│   └── etl.py            # filters and loads movies into Mongo
-├── data/
-│   ├── raw/                  # raw IMDb dumps (not in git)
-│   └── processed/            # (reserved)
-├── .github/workflows/
-│   └── update_data.yml         # weekly refresh
-├── .env.example
-└── requirements.txt
+```dotenv
+MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>/?appName=IMDb
+DB_NAME=imdb
+MIN_YEAR=2010
+MIN_VOTES=10000
+DWH_URL=postgresql://<user>:<password>@<neon-host>/<database>?sslmode=require
 ```
 
-## Data model (MongoDB)
+The PostgreSQL user must be able to create tables, views, and indexes, reload tables, and recreate the country reference table and geographic view. The loader applies `sql/schema.sql` automatically.
 
-**`movies`**:
+Run the pipeline in order:
+
+```bash
+python src/collector.py
+python src/etl.py
+python src/dwh.py
+```
+
+The collector downloads all five dumps on every run. Allow sufficient disk space and memory: only the principals and regional-title files are read in chunks; other source files and the warehouse export are loaded into memory.
+
+To reload PostgreSQL from the existing MongoDB collection, run only `python src/dwh.py`. If that collection is empty, the warehouse stage logs a message and returns without changing PostgreSQL.
+
+### Configuration
+
+| Variable | Purpose | Default when unset | Example / workflow value |
+| --- | --- | --- | --- |
+| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/` | Your Atlas connection string |
+| `DB_NAME` | MongoDB database | `imdb` | `imdb` |
+| `MIN_YEAR` | Minimum movie release year, inclusive | `1900` | `2010` |
+| `MIN_VOTES` | Minimum IMDb vote count, inclusive | `500` | `10000` |
+| `DWH_URL` | PostgreSQL connection string | None; required for `dwh.py` | Your Neon connection string |
+
+Local database and ETL configuration is loaded from `.env` via `python-dotenv`. Existing environment variables take precedence. The filters in `.env.example` are stricter than the code defaults to limit the size of the MongoDB collection.
+
+### Scheduled refresh
+
+[`.github/workflows/update_data.yml`](.github/workflows/update_data.yml) runs all three stages every Monday at **06:00 UTC (13:00 Asia/Novosibirsk)** and supports manual runs through `workflow_dispatch`.
+
+Configure these GitHub repository secrets:
+
+- `MONGODB_URI` — Atlas connection string.
+- `DWH_URL` — Neon PostgreSQL connection string.
+
+The workflow sets `MIN_YEAR=2010` and `MIN_VOTES=10000`; `DB_NAME` uses the code default, `imdb`. The local `.env` is ignored by Git and is not available to Actions. Update local settings and workflow settings separately when changing filters or the database name.
+
+Atlas network access must allow connections from the runner. Configure the access list for your runner setup; allowing `0.0.0.0/0` opens network access from any IP, with authentication still required.
+
+## Data model
+
+### MongoDB: `movies`
+
+One document per movie, keyed by its IMDb `tconst`:
+
 ```json
 {
-  "_id": "tconst",
-  "title": "string",
+  "_id": "tt1234567",
+  "title": "Example movie",
   "year": 2015,
   "decade": 2010,
   "genres": ["Action", "Drama"],
@@ -76,16 +117,81 @@ IMDb-Project/
   "rating": 7.8,
   "numVotes": 15234,
   "directors": ["Director name"],
-  "markets": ["US", "CA", "GB"]
+  "markets": ["CA", "GB", "US"]
 }
 ```
 
-`markets` is derived from `title.akas` (regions where IMDb shows the title as its display title, `type=imdbDisplay`) — it approximates localization/distribution reach, not an official country of production or real box-office release data (IMDb's free datasets don't include either).
+Missing runtime is stored as `null`; missing genres, directors, or markets become empty arrays. Indexes support queries on year, genres, rating, and markets.
 
-## Known limitations
+### PostgreSQL tables
 
-- **Non-atomic collection reload**: `etl.py` refreshes `movies` via `delete_many({})` followed by `insert_many(...)`, so there's a brief window where the collection is empty. For a weekly personal-project refresh this is harmless (the gap lasts seconds), but if someone hits the Atlas Charts dashboard during that window, they'll see 0 movies. A zero-downtime production setup would instead load into a temporary collection and atomically swap it in with `renameCollection`, so readers never see an empty state.
+The schema is defined in [`sql/schema.sql`](sql/schema.sql).
+
+| Table | Contents | Primary key |
+| --- | --- | --- |
+| `dim_movie` | Title, year, decade, runtime, rating, and vote count | `tconst` |
+| `movie_genre` | Movie-to-genre relationships | `(tconst, genre)` |
+| `movie_director` | Movie-to-director-name relationships | `(tconst, director)` |
+| `movie_market` | Movie-to-localization-region relationships | `(tconst, region)` |
+| `country_centroids` | Region names, coordinates, and region kinds | `region` |
+
+Relationship tables reference `dim_movie`; repeated array values are deduplicated during export. Country reference data is loaded from [`sql/country_centroids.csv`](sql/country_centroids.csv), which includes current countries and territories, historical regions, and aggregate regions.
+
+### SQL marts and BI
+
+| View | Analysis |
+| --- | --- |
+| `mart_genre_by_decade` | Movie count, average rating, and total votes by genre and decade |
+| `mart_genre_by_year` | Movie count, average rating, and total votes by genre and year |
+| `mart_director_stats` | Movie count, average rating, total votes, and first/last movie year by director name |
+| `mart_markets_by_year` | Movie count and average rating by localization region and year |
+| `mart_markets_geo` | Distinct movie count and average rating by mapped region, with coordinates and region kind |
+| `mart_movies_flat` | One row per movie, with genre/director strings and localization-market count |
+
+These are ordinary views, so they require no separate refresh after loading. Connect your BI tool to Neon and use the marts as data sources. For DataLens maps, use `lat` and `lon` from `mart_markets_geo`; filter `kind = 'country'` for current countries and territories, and use `historical` / `aggregate` for separate views. The geographic mart folds selected IMDb region aliases into shared points.
+
+For example:
+
+```sql
+SELECT genre, decade, movies, avg_rating
+FROM mart_genre_by_decade
+ORDER BY decade, movies DESC;
+```
+
+For MongoDB Charts, use the Atlas `movies` collection as the dashboard data source. BI dashboards are configured outside this repository.
+
+## Data semantics and limitations
+
+- **Localization proxy:** `markets` comes from nonempty `title.akas` regions whose `types` contains `imdbDisplay`. It describes regional title availability, not production countries, confirmed theatrical releases, revenue, or box-office performance.
+- **Overlapping groups:** a movie can have several genres, directors, and markets. Counts across these groups are not additive. `mart_movies_flat` keeps one row per movie to avoid multiplying rows when presenting its list attributes.
+- **Filtered sample:** analytics describe movies meeting the configured year and vote thresholds, rather than the entire IMDb catalog. Directors are resolved from `title.principals` and grouped by name, so names are not unique person identifiers.
+- **Full refresh:** the pipeline replaces data rather than loading incremental changes. MongoDB uses `delete_many` followed by `insert_many`, so readers can see an empty or partially loaded collection during refresh.
+- **Transactional warehouse refresh:** PostgreSQL schema application and data loading commit together or roll back on failure. `TRUNCATE` takes locks, so BI queries may wait during the load. MongoDB and PostgreSQL are separate stages; if the warehouse load fails, PostgreSQL retains its previous snapshot while MongoDB may already contain newer data.
+- **Geographic reference:** centroids are approximate; historical and aggregate regions include manually added points. Regions without a matching reference entry do not appear in `mart_markets_geo`.
+
+## Repository structure
+
+```text
+IMDb-Project/
+|-- src/
+|   |-- collector.py             # Download IMDb dumps
+|   |-- db.py                    # Shared MongoDB connection configuration
+|   |-- etl.py                   # Build and load MongoDB movie documents
+|   `-- dwh.py                   # Export MongoDB to PostgreSQL
+|-- sql/
+|   |-- schema.sql               # Warehouse tables, indexes, and BI views
+|   `-- country_centroids.csv    # Geographic reference data
+|-- data/
+|   |-- raw/                     # Downloaded dumps (ignored by Git)
+|   `-- processed/               # Reserved; unused by the current pipeline
+|-- .github/workflows/
+|   `-- update_data.yml          # Weekly and manual full refresh
+|-- .env.example
+|-- .pre-commit-config.yaml
+|-- requirements.txt
+`-- requirements-dev.txt
+```
 
 ## Stack
 
-Python (requests, pandas, pymongo), MongoDB Atlas + MongoDB Charts, GitHub Actions.
+Python 3.12, requests, pandas, tenacity, python-dotenv, PyMongo, Psycopg 3, MongoDB Atlas, Neon PostgreSQL, SQL views, DataLens / MongoDB Charts, and GitHub Actions. Development dependencies include pre-commit with Ruff and repository hygiene hooks.
