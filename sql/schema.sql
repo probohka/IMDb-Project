@@ -31,14 +31,18 @@ CREATE TABLE IF NOT EXISTS movie_market (
 );
 
 -- Country centroids (ISO 3166-1 alpha-2) for map charts; loaded from sql/country_centroids.csv.
-CREATE TABLE IF NOT EXISTS country_centroids (
+-- Reference data reloaded from the CSV on every run, so it is safe to recreate it
+-- (the dependent view is dropped first and recreated below).
+DROP VIEW IF EXISTS mart_markets_geo;
+DROP TABLE IF EXISTS country_centroids;
+CREATE TABLE country_centroids (
     region       TEXT PRIMARY KEY,
     country_name TEXT NOT NULL,
     lat          DOUBLE PRECISION NOT NULL,
-    lon          DOUBLE PRECISION NOT NULL
+    lon          DOUBLE PRECISION NOT NULL,
+    -- 'country' (current country), 'historical' (SUHH, YUCS, ...), 'aggregate' (XWW, XEU, ...)
+    kind         TEXT NOT NULL
 );
--- kind: 'country' (current country), 'historical' (SUHH, YUCS, ...), 'aggregate' (XWW, XEU, ...).
-ALTER TABLE country_centroids ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'country';
 
 -- Marts: plain views for BI (always fresh, no REFRESH needed after the full reload).
 
