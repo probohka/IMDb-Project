@@ -12,28 +12,9 @@ An end-to-end batch pipeline for movie analytics: download the official [IMDb no
 
 MongoDB Atlas serves as the pipeline's **OLTP database**, storing movie documents and providing the source data for the warehouse. Neon PostgreSQL serves as the **OLAP data warehouse**, exposing relational tables and SQL marts for BI analytics. The current pipeline refreshes MongoDB in batches rather than through live application transactions.
 
-```text
-IMDb datasets
-    |
-    v
-collector.py --> data/raw/*.tsv.gz
-                       |
-                       v
-                     etl.py
-                       |
-                       v
-               MongoDB Atlas (OLTP, movies) --> MongoDB Charts
-                       |
-                       v
-                     dwh.py <-- sql/schema.sql + sql/country_centroids.csv
-                       |
-                       v
-               Neon PostgreSQL (OLAP)
-                tables + SQL marts
-                       |
-                       v
-                 BI / DataLens
-```
+![IMDb Movie Analytics project architecture](docs/IMDb-Project-architecture.png)
+
+[Edit the diagram in Excalidraw](docs/IMDb-Project-architecture.excalidraw).
 
 1. **Extract — `src/collector.py`:** downloads `title.basics`, `title.ratings`, `title.principals`, `name.basics`, and `title.akas` into `data/raw/`. Downloads stream to disk and retry up to five times on failure.
 2. **Transform and load — `src/etl.py`:** selects `movie` titles by minimum release year and vote count, joins ratings, resolves director names, derives localization markets, and reloads the MongoDB `movies` collection. The large principals and regional-title files are processed in chunks.
